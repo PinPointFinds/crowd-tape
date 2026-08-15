@@ -1,12 +1,14 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 
 /* ============================================================
-   CROWD TAPE — social sentiment stock terminal (demo)
+   CROWD TAPE — social sentiment stock terminal
    - Top 20 stocks ranked by social mention volume
    - Price chart with buy/sell arrows sized by mention count
    - "Crowd accuracy": did arrows predict next-day moves?
-   NOTE: data is SIMULATED. Swap generateUniverse() for a real
-   feed (ApeWisdom / Tradestie / StockTwits + price API).
+   Data is LIVE, from data.json in this repo — collected hourly
+   by collector.py via GitHub Actions. History starts at a single
+   day and grows one point per day, so every lookup below is
+   length-relative, never a fixed index.
    ============================================================ */
 
 // ---------- palette ----------
@@ -29,90 +31,49 @@ const C = {
 const MONO = "'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace";
 const DISPLAY = "'Barlow Condensed', 'Arial Narrow', sans-serif";
 
-// ---------- deterministic rng ----------
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+// ---------- live feed ----------
+const FEED_URL =
+  "https://raw.githubusercontent.com/PinPointFinds/crowd-tape/main/data.json";
+
+// "2026-08-15" -> local midnight. Passing a bare ISO day to new Date() parses
+// it as UTC, which renders as the previous day for anyone west of Greenwich.
+function parseDay(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
-// sym, name, basePrice, baseMentions/day, baseline bullishness, predictiveness (-1..1)
-const TICKERS = [
-  ["NVDA", "NVIDIA", 182, 14200, 0.66, 0.9],
-  ["TSLA", "Tesla", 244, 11800, 0.55, 0.65],
-  ["PLTR", "Palantir", 158, 9400, 0.68, 1.0],
-  ["GME", "GameStop", 23, 8600, 0.6, 0.0],
-  ["AMD", "AMD", 171, 7900, 0.62, 0.8],
-  ["SMCI", "Super Micro", 46, 7100, 0.52, -0.6],
-  ["AAPL", "Apple", 231, 6400, 0.57, 0.4],
-  ["MSTR", "MicroStrategy", 372, 6100, 0.58, 0.6],
-  ["COIN", "Coinbase", 301, 5600, 0.54, 0.5],
-  ["HOOD", "Robinhood", 108, 5200, 0.63, 0.7],
-  ["SOFI", "SoFi", 21, 4800, 0.61, 0.3],
-  ["META", "Meta", 742, 4300, 0.56, 0.5],
-  ["AMZN", "Amazon", 228, 3900, 0.58, 0.2],
-  ["MSFT", "Microsoft", 512, 3600, 0.55, 0.3],
-  ["INTC", "Intel", 24, 3300, 0.44, 0.6],
-  ["RIVN", "Rivian", 14, 2900, 0.48, 0.0],
-  ["BABA", "Alibaba", 118, 2600, 0.51, -0.4],
-  ["AMC", "AMC", 4.1, 2300, 0.46, 0.0],
-  ["SPY", "S&P 500 ETF", 648, 2100, 0.52, 0.1],
-  ["GOOG", "Alphabet", 201, 1900, 0.57, 0.4],
-];
+// ApeWisdom returns HTML-escaped company names ("SPDR S&amp;P 500 ETF Trust")
+const decodeName = (s) =>
+  s.replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
 
-const DAYS = 60;
-
-function generateUniverse() {
-  const today = new Date();
-  const stocks = TICKERS.map(([sym, name, p0, m0, b0, pred], idx) => {
-    const rng = mulberry32(9000 + idx * 137);
-    const hist = [];
-
-    // 1) chatter first: mentions + bullish share per day
-    for (let i = 0; i < DAYS; i++) {
-      const spike = rng() < 0.07;
-      let mentions = m0 * (0.55 + 0.9 * rng()) * (spike ? 2 + 2.5 * rng() : 1);
-      let bull = b0 + (rng() - 0.5) * 0.28;
-      if (spike) bull = bull > 0.5 ? Math.min(0.92, bull + 0.16) : Math.max(0.08, bull - 0.16);
-      bull = Math.max(0.08, Math.min(0.92, bull));
-      hist.push({ mentions: Math.round(mentions), bull, spike });
-    }
-
-    // 2) price walk, nudged by YESTERDAY's sentiment (per-stock predictiveness)
-    let price = p0 * (0.82 + 0.2 * rng());
-    const vol = 0.022 + 0.02 * rng();
-    for (let i = 0; i < DAYS; i++) {
-      const noise = (rng() - 0.5) * 2 * vol;
-      const sent = i > 0 ? hist[i - 1].bull - 0.5 : 0;
-      price = price * (1 + noise + pred * sent * 0.055 + 0.0008);
-      hist[i].price = price;
-    }
-
-    // 3) dates
-    hist.forEach((h, i) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() - (DAYS - 1 - i));
-      h.date = d;
-      h.i = i;
-    });
-
-    return { sym, name, hist };
-  });
-
-  // rank by today's mention volume
-  stocks.sort((a, b) => b.hist[DAYS - 1].mentions - a.hist[DAYS - 1].mentions);
-  return stocks;
+async function loadUniverse() {
+  const res = await fetch(FEED_URL, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Feed responded ${res.status}`);
+  const feed = await res.json();
+  const stocks = (feed.stocks || [])
+    .filter((s) => s.hist && s.hist.length)
+    .map((s) => ({
+      sym: s.sym,
+      name: decodeName(s.name || s.sym),
+      hist: s.hist.map((h, i) => ({ ...h, date: parseDay(h.date), i })),
+    }));
+  return { stocks, generatedAt: feed.generated_at || null };
 }
+
+// history is short on day one and grows daily — never index from a fixed length
+const lastOf = (hist) => hist[hist.length - 1];
+const prevOf = (hist) => (hist.length > 1 ? hist[hist.length - 2] : null);
 
 // ---------- formatting ----------
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 const fmtDate = (d) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
 const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "K" : String(n));
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtStamp = (iso) => {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
+};
 const fmtPrice = (p) => (p >= 1000 ? p.toFixed(0) : p >= 100 ? p.toFixed(1) : p.toFixed(2));
 
 // arrow rule: what counts as a signal day
@@ -234,6 +195,8 @@ function SentimentChart({ stock, range, hover, setHover }) {
           {/* price area + line */}
           <path d={areaPath} fill="url(#areaFill)" />
           <path d={linePath} fill="none" stroke={C.amber} strokeWidth="1.8" strokeLinejoin="round" />
+          {/* a one-day history draws no line — show the lone point instead */}
+          {n === 1 && <circle cx={xAt(0)} cy={yAt(data[0].price)} r="3.5" fill={C.amber} />}
 
           {/* sentiment arrows: size = mention volume */}
           {data.map((d, i) => {
@@ -289,9 +252,9 @@ function SentimentChart({ stock, range, hover, setHover }) {
 
 // ---------- list row ----------
 function StockRow({ stock, rank, selected, maxMentions, onClick }) {
-  const last = stock.hist[DAYS - 1];
-  const prev = stock.hist[DAYS - 2];
-  const chg = (last.mentions / prev.mentions - 1) * 100;
+  const last = lastOf(stock.hist);
+  const prev = prevOf(stock.hist);
+  const chg = prev && prev.mentions ? (last.mentions / prev.mentions - 1) * 100 : null;
   const s = signalOf(last.bull);
   const pct = Math.round((s === -1 ? 1 - last.bull : last.bull) * 100);
   const pillColor = s === 1 ? C.bull : s === -1 ? C.bear : C.dim;
@@ -318,8 +281,8 @@ function StockRow({ stock, rank, selected, maxMentions, onClick }) {
 
       <span className="flex flex-col items-end ml-auto" style={{ width: 76, flexShrink: 0 }}>
         <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.text }}>{fmtK(last.mentions)}</span>
-        <span style={{ fontFamily: MONO, fontSize: 9.5, color: chg >= 0 ? C.bull : C.bear }}>
-          {chg >= 0 ? "+" : ""}{chg.toFixed(0)}% vs yd
+        <span style={{ fontFamily: MONO, fontSize: 9.5, color: chg == null ? C.faint : chg >= 0 ? C.bull : C.bear }}>
+          {chg == null ? "first day" : `${chg >= 0 ? "+" : ""}${chg.toFixed(0)}% vs yd`}
         </span>
       </span>
 
@@ -339,16 +302,71 @@ function StockRow({ stock, rank, selected, maxMentions, onClick }) {
   );
 }
 
+// ---------- loading / error screen ----------
+function Splash({ status, error }) {
+  return (
+    <div
+      className="min-h-screen w-full flex flex-col items-center justify-center gap-3 px-6 text-center"
+      style={{ background: C.bg, color: C.text }}
+    >
+      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: 3, color: C.amber }}>
+        SOCIAL SENTIMENT TERMINAL
+      </div>
+      <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 34, lineHeight: 1, letterSpacing: 1, textTransform: "uppercase" }}>
+        Crowd Tape
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: 12, color: status === "error" ? C.bear : C.dim }}>
+        {status === "error" ? "FEED UNAVAILABLE" : "LOADING FEED…"}
+      </div>
+      {status === "error" && (
+        <p className="m-0" style={{ fontFamily: MONO, fontSize: 11, color: C.faint, maxWidth: 460, lineHeight: 1.6 }}>
+          {error} — check that the collect-sentiment workflow has run and that data.json exists in the repo.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ---------- main ----------
 export default function CrowdTape() {
-  const stocks = useMemo(() => generateUniverse(), []);
-  const [selectedSym, setSelectedSym] = useState(stocks[0].sym);
+  const [stocks, setStocks] = useState([]);
+  const [generatedAt, setGeneratedAt] = useState(null);
+  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [error, setError] = useState(null);
+  const [selectedSym, setSelectedSym] = useState(null);
   const [range, setRange] = useState(30);
   const [hover, setHover] = useState(null);
 
+  useEffect(() => {
+    let alive = true;
+    loadUniverse()
+      .then((feed) => {
+        if (!alive) return;
+        if (!feed.stocks.length) {
+          setError("Feed is empty");
+          setStatus("error");
+          return;
+        }
+        setStocks(feed.stocks);
+        setGeneratedAt(feed.generatedAt);
+        setStatus("ready");
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setError(e.message);
+        setStatus("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // every hook above runs unconditionally — safe to bail out here
+  if (status !== "ready") return <Splash status={status} error={error} />;
+
   const stock = stocks.find((s) => s.sym === selectedSym) || stocks[0];
   const data = stock.hist.slice(-range);
-  const maxMentions = stocks[0].hist[DAYS - 1].mentions;
+  const maxMentions = Math.max(...stocks.map((s) => lastOf(s.hist).mentions), 1);
 
   // crowd accuracy over the visible window
   let hits = 0, signals = 0;
@@ -361,7 +379,9 @@ export default function CrowdTape() {
   }
   const rate = signals > 0 ? hits / signals : 0;
   const verdict =
-    signals === 0
+    data.length < 2
+      ? "History is one day deep — the score needs a following day to check the arrows against. Come back tomorrow."
+      : signals === 0
       ? "No strong-conviction days in this window."
       : rate >= 0.57
       ? "Crowd has been predictive here — arrows led next-day moves more often than not."
@@ -373,8 +393,9 @@ export default function CrowdTape() {
   const readout = hover != null ? data[Math.min(hover, data.length - 1)] : data[data.length - 1];
   const rs = signalOf(readout.bull);
 
-  const last = stock.hist[DAYS - 1];
-  const dayChg = (last.price / stock.hist[DAYS - 2].price - 1) * 100;
+  const last = lastOf(stock.hist);
+  const prevDay = prevOf(stock.hist);
+  const dayChg = prevDay && prevDay.price ? (last.price / prevDay.price - 1) * 100 : null;
 
   return (
     <div className="min-h-screen w-full" style={{ background: C.bg, color: C.text }}>
@@ -398,9 +419,14 @@ export default function CrowdTape() {
           </h1>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.amber, border: `1px solid ${C.amber}`, padding: "3px 8px", borderRadius: 3, letterSpacing: 1 }}>
-            SIMULATED DATA
+          <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.bull, border: `1px solid ${C.bull}`, padding: "3px 8px", borderRadius: 3, letterSpacing: 1 }}>
+            ● LIVE DATA
           </span>
+          {generatedAt && (
+            <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.faint, letterSpacing: 1 }}>
+              {fmtStamp(generatedAt)}
+            </span>
+          )}
         </div>
         <p className="w-full m-0" style={{ fontFamily: MONO, fontSize: 11, color: C.dim, maxWidth: 720 }}>
           Top 20 tickers by social chatter. Green ▲ = crowd leaning buy, red ▼ = crowd leaning sell, arrow size = how many people are talking. Accuracy score tracks whether the crowd called the next day right.
@@ -413,7 +439,7 @@ export default function CrowdTape() {
           {[0, 1].map((rep) => (
             <div key={rep} className="flex" aria-hidden={rep === 1}>
               {stocks.map((s) => {
-                const l = s.hist[DAYS - 1];
+                const l = lastOf(s.hist);
                 const sg = signalOf(l.bull);
                 return (
                   <span key={rep + s.sym} className="px-4 whitespace-nowrap" style={{ fontFamily: MONO, fontSize: 11 }}>
@@ -463,8 +489,8 @@ export default function CrowdTape() {
               </div>
               <div className="flex items-baseline gap-3 mt-1">
                 <span style={{ fontFamily: MONO, fontSize: 20, fontWeight: 600 }}>${fmtPrice(last.price)}</span>
-                <span style={{ fontFamily: MONO, fontSize: 12, color: dayChg >= 0 ? C.bull : C.bear }}>
-                  {dayChg >= 0 ? "+" : ""}{dayChg.toFixed(2)}% today
+                <span style={{ fontFamily: MONO, fontSize: 12, color: dayChg == null ? C.faint : dayChg >= 0 ? C.bull : C.bear }}>
+                  {dayChg == null ? "no prior day yet" : `${dayChg >= 0 ? "+" : ""}${dayChg.toFixed(2)}% today`}
                 </span>
               </div>
             </div>
@@ -540,7 +566,7 @@ export default function CrowdTape() {
           </div>
 
           <p className="mt-4 mb-1" style={{ fontFamily: MONO, fontSize: 10, color: C.faint }}>
-            Demo runs on simulated chatter + prices. Wire generateUniverse() to a live feed (ApeWisdom / Tradestie / StockTwits + a price API) and everything else keeps working. Not financial advice.
+            Live chatter from ApeWisdom (Reddit mentions) and Tradestie (bullish share), prices from Yahoo Finance, collected hourly and published as data.json. History grows one point per day. Research tool — not financial advice.
           </p>
         </main>
       </div>

@@ -44,23 +44,17 @@ https://raw.githubusercontent.com/YOUR_NAME/YOUR_REPO/main/data.json
 
 (One GitHub quirk: if the repo gets no activity for 60 days the schedule pauses — the hourly bot commits themselves count as activity, so in practice it keeps itself alive.)
 
-## Hook up the Crowd Tape page
+## The Crowd Tape page
 
-In `crowd-tape.jsx`, the demo builds fake data with `generateUniverse()`. Replace that with a fetch of your feed:
+`crowd-tape.jsx` is already wired to the live feed — the simulated `generateUniverse()` is gone. It fetches:
 
-```js
-async function loadUniverse() {
-  const url = "https://raw.githubusercontent.com/YOUR_NAME/YOUR_REPO/main/data.json";
-  const { stocks } = await (await fetch(url)).json();
-  return stocks.map((s) => ({
-    sym: s.sym,
-    name: s.name,
-    hist: s.hist.map((h, i) => ({ ...h, date: new Date(h.date), i })),
-  }));
-}
+```
+https://raw.githubusercontent.com/PinPointFinds/crowd-tape/main/data.json
 ```
 
-Then load it with a `useEffect` instead of `useMemo`, and replace the fixed `DAYS - 1` index lookups with `hist.length - 1` (real history starts short and grows). Everything else — arrows, volume bars, accuracy score — works unchanged, because `data.json` uses the exact same fields the demo generates: `date`, `price`, `mentions`, `bull`.
+on mount via `useEffect`, showing a loading/error splash until the feed lands. Because real history starts at one day and grows, every lookup is length-relative (`lastOf` / `prevOf`) rather than a fixed `DAYS - 1` index — the "vs yesterday" figures read *first day* until there's a second point to compare against.
+
+The component has no build config here; drop it into any React app (it expects Tailwind classes for layout). If you fork this to another account, change `FEED_URL` at the top of the file.
 
 ## Good to know
 
