@@ -4,6 +4,11 @@ __pycache__/
 venv/
 env/
 
+# local preview harness (package-lock.json IS committed, so the harness
+# keeps building with the versions it was tested against)
+node_modules/
+dist/
+
 # Note: sentiment.db and data.json are deliberately NOT ignored —
 # the collect-sentiment workflow commits them back to the repo, and
 # data.json's raw URL is the live feed.

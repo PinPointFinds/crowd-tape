@@ -54,7 +54,20 @@ https://raw.githubusercontent.com/PinPointFinds/crowd-tape/main/data.json
 
 on mount via `useEffect`, showing a loading/error splash until the feed lands. Because real history starts at one day and grows, every lookup is length-relative (`lastOf` / `prevOf`) rather than a fixed `DAYS - 1` index — the "vs yesterday" figures read *first day* until there's a second point to compare against.
 
-The component has no build config here; drop it into any React app (it expects Tailwind classes for layout). If you fork this to another account, change `FEED_URL` at the top of the file.
+If you fork this to another account, change `FEED_URL` at the top of the file.
+
+### Preview it locally
+
+```bash
+npm install
+npm run dev
+```
+
+Opens on http://localhost:5199 against the **live** feed — the same JSON your published page would fetch, so what you see is what the data actually looks like today.
+
+That harness is `index.html` + `dev/` + the Vite config, and exists only to render the component; it is not a deployment target. `crowd-tape.jsx` itself is a plain component meant to be dropped into your own React app, which needs to supply React and Tailwind.
+
+If `npm install` warns that install scripts were skipped, run `npm approve-scripts esbuild` — npm 11 blocks postinstall scripts by default and Vite's bundler needs its platform binary.
 
 ## Good to know
 

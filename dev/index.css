@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* the component paints its own dark surface; keep the page behind it matching */
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: #0a0f1c;
+}
