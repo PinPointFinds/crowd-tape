@@ -118,7 +118,14 @@ function SentimentChart({ stock, range, hover, setHover }) {
     if (d.price > pMax) pMax = d.price;
     if (d.mentions > mMax) mMax = d.mentions;
   }
-  const span = pMax - pMin || 1;
+  // a flat window (day one, or a stock that hasn't moved) has no range to scale
+  // to — pad it symmetrically so the point sits centred, not pinned to the floor
+  if (pMax - pMin < 1e-9) {
+    const pad = Math.max(pMax * 0.005, 0.01);
+    pMin -= pad;
+    pMax += pad;
+  }
+  const span = pMax - pMin;
   const yAt = (p) => pBot - ((p - pMin) / span) * (pBot - pTop);
 
   const linePath = data.map((d, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(d.price).toFixed(1)}`).join(" ");
