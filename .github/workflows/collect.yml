@@ -1,0 +1,42 @@
+# Put this file at:  .github/workflows/collect.yml
+# It runs the collector every hour on GitHub's servers (free) and
+# commits sentiment.db + data.json back into the repo, so the raw URL
+# of data.json becomes your live data feed. No server needed.
+
+name: collect-sentiment
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # hourly at :17 UTC (GitHub cron is UTC, best-effort)
+  workflow_dispatch: {}     # adds a "Run workflow" button in the Actions tab
+
+permissions:
+  contents: write           # lets the job push the updated data files
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Collect snapshot
+        run: python collector.py
+
+      - name: Export frontend JSON
+        run: python export_json.py
+
+      - name: Commit data back to the repo
+        run: |
+          git config user.name "crowd-tape-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add sentiment.db data.json
+          git commit -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC" || echo "nothing new"
+          git push
