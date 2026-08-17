@@ -2,9 +2,11 @@
   "name": "crowd-tape",
   "private": true,
   "type": "module",
-  "description": "Local preview harness for crowd-tape.jsx — not a deployment target",
+  "description": "Crowd Tape — live social sentiment page, built with Vite",
   "scripts": {
-    "dev": "vite"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.3.1",

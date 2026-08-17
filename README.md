@@ -1,13 +1,19 @@
-# Crowd Tape — data collector
+# Crowd Tape
 
-Records which stocks the internet is talking about, how bullish the crowd is, and the price at that moment — one snapshot at a time. After a couple of weeks you have real history, and the "crowd accuracy" score on the Crowd Tape page becomes meaningful.
+**Live: https://pinpointfinds.github.io/crowd-tape/**
+
+Records which stocks the internet is talking about, how bullish the crowd is, and the price at that moment — one snapshot at a time. After a couple of weeks you have real history, and the "crowd accuracy" score on the page becomes meaningful.
 
 ## The files
 
 - **collector.py** — pulls the top 30 tickers by Reddit mentions (ApeWisdom), bullish/bearish sentiment (Tradestie), and the latest price (yfinance), then appends a snapshot to `sentiment.db` (SQLite). All three sources are free and need no API key.
 - **export_json.py** — squeezes the database into `data.json`: one point per stock per day, top 20 stocks, ready for the frontend.
+- **crowd-tape.jsx** — the page itself, a React component that fetches `data.json` in the browser.
 - **collect.yml** — a GitHub Actions workflow that runs both scripts every hour for free.
+- **pages.yml** — builds the page and publishes it to GitHub Pages on every push that touches the frontend.
 - **requirements.txt** — the two Python packages needed.
+
+The site is static and the data feed is a plain public URL, so the page fetches fresh numbers straight from the browser. Hourly data commits do not rebuild the site — nothing to rebuild.
 
 ## Try it once, locally
 
